@@ -226,6 +226,7 @@ if os.environ.get("WASI_X86") == "1":
         'x86_specific_flags = [\n'
         '    "-msse2",\n'
         '    "-mavx2",\n'
+        '    "-mfma",\n'
         ']\n',
     )
     assert 'x86_specific_flags = [' in s2, "x86_specific_flags insertion failed"
