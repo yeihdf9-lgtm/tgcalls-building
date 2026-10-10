@@ -260,3 +260,50 @@ if os.environ.get("WASI_X86") == "1":
     with open(p, "w", encoding="utf-8") as f:
         f.write(s2)
     print("webrtc BUILD: x86 SIMD headers declared")
+
+    # crc32c: on x86_64 the default branch must compile crc32c_sse42.cc
+    # (crc32c.cc dispatches to ExtendSse42 when __SSE4_2__ is defined).
+    p = "third-party/webrtc/crc32c/BUILD"
+    with open(p, "r", encoding="utf-8") as f:
+        s = f.read()
+    s2 = s.replace(
+        'arch_specific_crc32c_sources = select({\n'
+        '    "@build_bazel_rules_apple//apple:ios_arm64": [\n'
+        '        "third_party/crc32c/src/crc32c_arm64.cc",\n'
+        '    ],\n'
+        '    "//build-system:ios_sim_arm64": [\n'
+        '        "third_party/crc32c/src/crc32c_arm64.cc",\n'
+        '    ],\n'
+        '    "//conditions:default": [],\n'
+        '})',
+        'arch_specific_crc32c_sources = select({\n'
+        '    "@build_bazel_rules_apple//apple:ios_arm64": [\n'
+        '        "third_party/crc32c/src/crc32c_arm64.cc",\n'
+        '    ],\n'
+        '    "//build-system:ios_sim_arm64": [\n'
+        '        "third_party/crc32c/src/crc32c_arm64.cc",\n'
+        '    ],\n'
+        '    "//conditions:default": [\n'
+        '        "third_party/crc32c/src/crc32c_sse42.cc",\n'
+        '    ],\n'
+        '})',
+    )
+    assert s2 != s, "crc32c BUILD pattern not found"
+    s2 = s2.replace(
+        '    copts = [\n'
+        '        "-Ithird-party/webrtc/crc32c/third_party/crc32c/src/include"\n'
+        '    ],',
+        '    copts = select({\n'
+        '        "@platforms//os:linux": [\n'
+        '            "-Ithird-party/webrtc/crc32c/third_party/crc32c/src/include",\n'
+        '            "-msse4.2",\n'
+        '        ],\n'
+        '        "//conditions:default": [\n'
+        '            "-Ithird-party/webrtc/crc32c/third_party/crc32c/src/include",\n'
+        '        ],\n'
+        '    }),',
+    )
+    assert "-msse4.2" in s2, "crc32c copts pattern not found"
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(s2)
+    print("crc32c BUILD: crc32c_sse42.cc enabled on x86_64 default")
