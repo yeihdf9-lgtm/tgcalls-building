@@ -59,32 +59,16 @@ jobs:
       - name: Patch sources for GCC/Linux
         working-directory: telegram-ios
         run: |
-          # Apple libc++ pulls many standard headers transitively; GCC/libstdc++
-          # does not. Force-include a prefix header into every C++ TU instead of
-          # patching each file (works because .bazelrc uses spawn_strategy=standalone,
-          # so the header is visible at the execroot).
-          cat > linux_std_prefix.h <<'EOF'
-          #ifndef TGCALLS_LINUX_STD_PREFIX_H
-          #define TGCALLS_LINUX_STD_PREFIX_H
-          #ifdef __cplusplus
-          #include <mutex>
-          #include <condition_variable>
-          #include <atomic>
-          #include <thread>
-          #include <functional>
-          #include <memory>
-          #include <string>
-          #include <vector>
-          #endif
-          #endif
-          EOF
-          # Bazel's include validator rejects force-included headers inside the
-          # execroot as "undeclared inclusions", so install it as a system header
-          # instead (/usr/local/include is on GCC's default search path).
-          sudo cp linux_std_prefix.h /usr/local/include/linux_std_prefix.h
-          # GCC/libstdc++ does not pull <mutex> in transitively like Apple libc++ does
-          sed -i '1i #include <mutex>' \
-            submodules/TgVoipWebrtc/tgcalls/tgcalls/group/GroupInstanceReferenceImpl.cpp
+          # Apple libc++ includes many standard headers transitively; GCC/libstdc++
+          # does not. Prepend the standard threading/utility headers to every
+          # tgcalls source that uses the corresponding symbols (patching files
+          # directly, since Bazel's include validator rejects extra -include
+          # headers as undeclared inclusions).
+          cd submodules/TgVoipWebrtc/tgcalls
+          for f in $(grep -rlE 'std::(mutex|lock_guard|unique_lock|scoped_lock|condition_variable|thread|atomic|call_once|once_flag|shared_mutex)' tgcalls tools --include='*.cpp' --include='*.h' --include='*.hpp' || true); do
+            { printf '#include <mutex>\n#include <condition_variable>\n#include <atomic>\n#include <thread>\n'; cat "$f"; } > "$f.tmp" && mv "$f.tmp" "$f"
+          done
+          echo "Patched files: $(grep -rl '^#include <mutex>' tgcalls tools | wc -l)"
 
       - name: Create build-configuration stub
         working-directory: telegram-ios
@@ -105,7 +89,6 @@ jobs:
           sed -i '/incompatible_target_cpu_from_platform/d' .bazelrc
           ./build-input/bazel-8.4.2-linux build \
             //submodules/TgVoipWebrtc/tgcalls/tools/cli:tgcalls_cli \
-            --copt=-include --copt=linux_std_prefix.h \
             --strategy=Genrule=standalone \
             --spawn_strategy=standalone
 
