@@ -66,6 +66,7 @@ jobs:
           cat > linux_std_prefix.h <<'EOF'
           #ifndef TGCALLS_LINUX_STD_PREFIX_H
           #define TGCALLS_LINUX_STD_PREFIX_H
+          #ifdef __cplusplus
           #include <mutex>
           #include <condition_variable>
           #include <atomic>
@@ -74,6 +75,7 @@ jobs:
           #include <memory>
           #include <string>
           #include <vector>
+          #endif
           #endif
           EOF
           # GCC/libstdc++ does not pull <mutex> in transitively like Apple libc++ does
