@@ -70,24 +70,31 @@ p = "submodules/ffmpeg/BUILD"
 with open(p, "r", encoding="utf-8") as f:
     s = f.read()
 
-if "ffmpeg_lib_tail" not in s:
-    tail = (
-        'cc_library(\n'
-        '    name = "ffmpeg_lib_tail",\n'
-        '    srcs = ["libavutil.a", "libswresample.a"],\n'
-        '    visibility = ["//visibility:public"],\n'
-        ")\n"
-        "\n"
-        'cc_library(\n'
-        '    name = "ffmpeg",'
-    )
-    assert 'cc_library(\n    name = "ffmpeg",' in s, "ffmpeg cc_library pattern not found"
-    s = s.replace('cc_library(\n    name = "ffmpeg",', tail, 1)
-    old_deps = 'deps = [\n        ":ffmpeg_lib",'
-    assert old_deps in s, "ffmpeg deps pattern not found"
-    s = s.replace(old_deps, 'deps = [\n        ":ffmpeg_lib",\n        ":ffmpeg_lib_tail",', 1)
-    with open(p, "w", encoding="utf-8") as f:
-        f.write(s)
-    print("ffmpeg BUILD: appended ffmpeg_lib_tail for GNU ld archive order")
-else:
-    print("ffmpeg BUILD: ffmpeg_lib_tail already present")
+# GNU ld resolves static archives left-to-right and Bazel does not duplicate
+# an archive on the link line, so the only fix is to order the archives by
+# dependency: avformat -> avcodec -> swresample -> avutil (as pkg-config does).
+# Upstream's mac-friendlier order (avutil first) leaves avutil symbols
+# referenced from libavcodec.a unresolved.
+old_libs = (
+    'ffmpeg_libs = [\n'
+    '    "libavutil.a",\n'
+    '    "libavcodec.a",\n'
+    '    "libavformat.a",\n'
+    '    "libswresample.a",\n'
+    ']'
+)
+new_libs = (
+    '# Linux (GNU ld): archives must be ordered by dependency:\n'
+    '# avformat -> avcodec -> swresample -> avutil.\n'
+    'ffmpeg_libs = [\n'
+    '    "libavformat.a",\n'
+    '    "libavcodec.a",\n'
+    '    "libswresample.a",\n'
+    '    "libavutil.a",\n'
+    ']'
+)
+assert old_libs in s, "ffmpeg_libs list not found"
+s = s.replace(old_libs, new_libs, 1)
+with open(p, "w", encoding="utf-8") as f:
+    f.write(s)
+print("ffmpeg BUILD: reordered ffmpeg_libs for GNU ld archive resolution")
