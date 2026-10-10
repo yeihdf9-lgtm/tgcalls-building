@@ -56,6 +56,13 @@ jobs:
           chmod +x build-input/bazel-8.4.2-linux
           ./build-input/bazel-8.4.2-linux --version
 
+      - name: Patch sources for GCC/Linux
+        working-directory: telegram-ios
+        run: |
+          # GCC/libstdc++ does not pull <mutex> in transitively like Apple libc++ does
+          sed -i '1i #include <mutex>' \
+            submodules/TgVoipWebrtc/tgcalls/tgcalls/group/GroupInstanceReferenceImpl.cpp
+
       - name: Create build-configuration stub
         working-directory: telegram-ios
         run: |
