@@ -15,7 +15,6 @@ import os
 import re
 
 ROOT = "submodules/TgVoipWebrtc/tgcalls"
-
 # --- 1. missing standard includes -------------------------------------------
 sym_re = re.compile(
     r"std::(mutex|lock_guard|unique_lock|scoped_lock|condition_variable|"
@@ -23,7 +22,7 @@ sym_re = re.compile(
 )
 prefix = "#include <mutex>\n#include <condition_variable>\n#include <atomic>\n#include <thread>\n"
 patched = []
-for base in ("tgcalls", "tools"):
+for base in (os.path.join(ROOT, "tgcalls"), os.path.join(ROOT, "tools")):
     for dirpath, _, filenames in os.walk(base):
         for name in filenames:
             if not name.endswith((".cpp", ".h", ".hpp")):
