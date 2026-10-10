@@ -53,6 +53,17 @@ jobs:
           chmod +x build-input/bazel-8.4.2-linux
           ./build-input/bazel-8.4.2-linux --version
 
+      - name: Create build-configuration stub
+        working-directory: telegram-ios
+        run: |
+          # Mirror what build-system/Make/Make.py resolve_configuration() writes:
+          # the root MODULE.bazel overrides module "build_configuration" to this path.
+          mkdir -p build-input/configuration-repository/provisioning
+          touch build-input/configuration-repository/WORKSPACE
+          printf 'module(\n    name = "build_configuration",\n)\n' > build-input/configuration-repository/MODULE.bazel
+          touch build-input/configuration-repository/BUILD
+          touch build-input/configuration-repository/provisioning/BUILD
+
       - name: Build tgcalls_cli
         working-directory: telegram-ios
         run: |
