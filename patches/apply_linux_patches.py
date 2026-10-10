@@ -142,3 +142,19 @@ if os.environ.get("WASI_X86") == "1":
     with open(p, "w", encoding="utf-8") as f:
         f.write(s2)
     print("openh264 BUILD: arm64 asm excluded on default (x86_64) platform")
+
+    # wamr: swap the aarch64 invoke-native asm and target defines for x86_64
+    p = "third-party/wamr/BUILD"
+    with open(p, "r", encoding="utf-8") as f:
+        s = f.read()
+    s2 = s.replace(
+        '"core/iwasm/common/arch/invokeNative_aarch64.s",',
+        '"core/iwasm/common/arch/invokeNative_em64.s",',
+    )
+    assert s2 != s, "wamr invokeNative_aarch64.s pattern not found"
+    s2 = s2.replace('-DBUILD_TARGET_AARCH64=1', '-DBUILD_TARGET_X86_64=1')
+    s2 = s2.replace('-DBUILD_TARGET=\\\\\\"AARCH64\\\\\\"', '-DBUILD_TARGET=\\\\\\"X86_64\\\\\\"')
+    assert 'BUILD_TARGET_X86_64=1' in s2, "wamr BUILD_TARGET swap failed"
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(s2)
+    print("wamr BUILD: switched to x86_64 invoke-native asm and target defines")
