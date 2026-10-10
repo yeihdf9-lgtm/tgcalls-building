@@ -158,3 +158,31 @@ if os.environ.get("WASI_X86") == "1":
     with open(p, "w", encoding="utf-8") as f:
         f.write(s2)
     print("wamr BUILD: switched to x86_64 invoke-native asm and target defines")
+
+    # webrtc: on x86_64, exclude the arm NEON sources and arch flags
+    p = "third-party/webrtc/BUILD"
+    with open(p, "r", encoding="utf-8") as f:
+        s = f.read()
+    s2 = s.replace(
+        'arch_specific_sources = select({\n'
+        '    "@build_bazel_rules_apple//apple:ios_arm64": common_arm_specific_sources + arm64_specific_sources,\n'
+        '    "//build-system:ios_sim_arm64": common_arm_specific_sources + arm64_specific_sources,\n'
+        '    "//conditions:default": common_arm_specific_sources + arm64_specific_sources,\n'
+        '})',
+        'arch_specific_sources = select({\n'
+        '    "@build_bazel_rules_apple//apple:ios_arm64": common_arm_specific_sources + arm64_specific_sources,\n'
+        '    "//build-system:ios_sim_arm64": common_arm_specific_sources + arm64_specific_sources,\n'
+        '    "//conditions:default": [],  # x86_64: no arm NEON sources\n'
+        '})',
+    )
+    assert s2 != s, "webrtc arch_specific_sources pattern not found"
+    s2 = s2.replace(
+        '    "@platforms//os:linux": platform_shared_flags + linux_specific_flags + arm64_specific_flags,\n'
+        '    "//conditions:default": platform_shared_flags + apple_specific_flags + arm64_specific_flags,',
+        '    "@platforms//os:linux": platform_shared_flags + linux_specific_flags,\n'
+        '    "//conditions:default": platform_shared_flags + apple_specific_flags,',
+    )
+    assert 'linux_specific_flags,\n    "//conditions:default": platform_shared_flags + apple_specific_flags,' in s2, "webrtc cflags pattern not found"
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(s2)
+    print("webrtc BUILD: arm NEON sources/flags excluded on x86_64")
