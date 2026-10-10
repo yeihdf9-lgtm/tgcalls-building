@@ -51,6 +51,9 @@ jobs:
       - name: Build tgcalls_cli
         working-directory: telegram-ios
         run: |
+          # Bazel 8.4.2 no longer knows --incompatible_target_cpu_from_platform,
+          # which upstream .bazelrc still passes; drop it (iOS-only concern).
+          sed -i '/incompatible_target_cpu_from_platform/d' .bazelrc
           ./build-input/bazel-8.4.2-linux build \
             //submodules/TgVoipWebrtc/tgcalls/tools/cli:tgcalls_cli \
             --strategy=Genrule=standalone \
