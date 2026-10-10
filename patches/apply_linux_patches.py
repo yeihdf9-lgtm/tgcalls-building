@@ -97,4 +97,24 @@ assert old_libs in s, "ffmpeg_libs list not found"
 s = s.replace(old_libs, new_libs, 1)
 with open(p, "w", encoding="utf-8") as f:
     f.write(s)
+# --- 4. x86_64 hosts: swap arm64 wasi-sdk pin for the x86_64 SDK ---------
+if os.environ.get("WASI_X86") == "1":
+    import re as _re
+    p = "MODULE.bazel"
+    with open(p, "r", encoding="utf-8") as f:
+        s = f.read()
+    s = s.replace("wasi-sdk-33.0-arm64-linux.tar.gz", "wasi-sdk-33.0-x86_64-linux.tar.gz")
+    # sha256 of wasi-sdk-33.0-x86_64-linux.tar.gz (verified download)
+    x86_sha = "0ba8b5bfaeb2adf3f29bab5841d76cf5318ab8e1642ea195f88baba1abd47bce"
+    s, n = _re.subn(
+        r'(name = "wasi_sdk_linux",\s*urls = \[[^\]]*\],\s*sha256 = ")[0-9a-f]{64}(")',
+        r"\g<1>" + x86_sha + r"\g<2>",
+        s,
+        count=1,
+    )
+    assert n == 1, "wasi_sdk_linux sha256 not found/updated"
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(s)
+    print("MODULE.bazel: wasi_sdk_linux switched to x86_64 variant")
+
 print("ffmpeg BUILD: reordered ffmpeg_libs for GNU ld archive resolution")
