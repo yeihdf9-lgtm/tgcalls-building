@@ -1,0 +1,131 @@
+name: Build tgcalls (Linux x86_64, ASan)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - .github/workflows/build-tgcalls-asan.yml
+      - patches/**
+
+jobs:
+  build-tgcalls-asan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+
+    steps:
+      - name: Check out this repository (workflow + patch scripts)
+        uses: actions/checkout@v4
+
+      - name: Show runner info
+        run: |
+          uname -a
+          nproc
+          free -h
+          df -h /
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup || true
+          df -h /
+
+      - name: Install build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc g++ cmake meson ninja-build nasm make \
+            autoconf automake libtool pkg-config python3 \
+            unzip curl ca-certificates patch \
+            zlib1g-dev libbz2-dev
+
+      - name: Clone Telegram-iOS (with tgcalls submodule)
+        run: |
+          git clone --depth 1 https://github.com/TelegramMessenger/Telegram-iOS.git telegram-ios
+          cd telegram-ios
+          git submodule update --init --depth 1 \
+            submodules/TgVoipWebrtc \
+            build-system/bazel-rules/rules_xcodeproj \
+            build-system/bazel-rules/rules_apple \
+            build-system/bazel-rules/rules_swift \
+            build-system/bazel-rules/apple_support \
+            third-party/libvpx/libvpx \
+            third-party/dav1d/dav1d \
+            third-party/webrtc/webrtc
+          echo "--- pinned tgcalls commit ---"
+          git -C submodules/TgVoipWebrtc/tgcalls rev-parse HEAD
+
+      - name: Download Bazel 8.4.2 (linux-x86_64)
+        run: |
+          cd telegram-ios
+          mkdir -p build-input
+          curl -fL "https://github.com/bazelbuild/bazel/releases/download/8.4.2/bazel-8.4.2-linux-x86_64" \
+            -o build-input/bazel-8.4.2-linux
+          chmod +x build-input/bazel-8.4.2-linux
+          ./build-input/bazel-8.4.2-linux --version
+
+      - name: Patch sources for GCC/Linux (x86_64)
+        working-directory: telegram-ios
+        env:
+          WASI_X86: "1"
+        run: |
+          # Repo-committed script: (1) prepend missing std threading includes,
+          # (2) fix designated-initializer order for GCC, (3) fix GNU ld
+          # archive order for the ffmpeg static libs, (4) x86_64 arch swaps.
+          python3 ../patches/apply_linux_patches.py
+
+      - name: Create build-configuration stub
+        working-directory: telegram-ios
+        run: |
+          # Mirror what build-system/Make/Make.py resolve_configuration() writes:
+          # the root MODULE.bazel overrides module "build_configuration" to this path.
+          mkdir -p build-input/configuration-repository/provisioning
+          touch build-input/configuration-repository/WORKSPACE
+          printf 'module(\n    name = "build_configuration",\n)\n' > build-input/configuration-repository/MODULE.bazel
+          touch build-input/configuration-repository/BUILD
+          touch build-input/configuration-repository/provisioning/BUILD
+
+      - name: Build tgcalls_cli (AddressSanitizer)
+        working-directory: telegram-ios
+        run: |
+          # Bazel 8.4.2 no longer knows --incompatible_target_cpu_from_platform,
+          # which upstream .bazelrc still passes; drop it (iOS-only concern).
+          sed -i '/incompatible_target_cpu_from_platform/d' .bazelrc
+          ./build-input/bazel-8.4.2-linux build \
+            //submodules/TgVoipWebrtc/tgcalls/tools/cli:tgcalls_cli \
+            --copt=-fsanitize=address \
+            --copt=-fno-omit-frame-pointer \
+            --copt=-g \
+            --copt=-O1 \
+            --linkopt=-fsanitize=address \
+            --strategy=Genrule=standalone \
+            --spawn_strategy=standalone
+
+      - name: Collect artifacts (binary + libs, asan/ directory)
+        if: success()
+        run: |
+          cd telegram-ios
+          BIN="bazel-bin/submodules/TgVoipWebrtc/tgcalls/tools/cli/tgcalls_cli"
+          # keep ASan outputs separate from the regular builds
+          mkdir -p out/asan
+          cp "$BIN" out/asan/tgcalls_cli
+          find bazel-bin/submodules/TgVoipWebrtc -maxdepth 1 -name '*.wasm' -exec cp {} out/asan/ \; || true
+          ldd "$BIN" | tee out/asan/tgcalls_cli-ldd.txt || true
+          # runtime requirements note for local use
+          {
+            echo "ASan build: install the GCC AddressSanitizer runtime locally:"
+            echo "  sudo apt install libasan8"
+            echo "Run with symbolized reports:"
+            echo "  ASAN_OPTIONS=detect_leaks=1:symbolize=1 ./tgcalls_cli --mode p2p --duration 10"
+          } > out/asan/RUNTIME-NOTES.txt
+          tar -czf tgcalls-cli-linux-x86_64-asan.tar.gz -C out .
+          sha256sum out/asan/tgcalls_cli
+          ls -la out/asan/
+
+      - name: Upload artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tgcalls-cli-linux-x86_64-asan
+          path: telegram-ios/tgcalls-cli-linux-x86_64-asan.tar.gz
+          if-no-files-found: error
+          retention-days: 30
