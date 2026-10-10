@@ -186,3 +186,49 @@ if os.environ.get("WASI_X86") == "1":
     with open(p, "w", encoding="utf-8") as f:
         f.write(s2)
     print("webrtc BUILD: arm NEON sources/flags excluded on x86_64")
+
+    # webrtc: on x86_64, wire in the SSE/AVX2 fir-filter sources that
+    # fir_filter_factory.cc unconditionally includes (headers at minimum).
+    p = "third-party/webrtc/BUILD"
+    with open(p, "r", encoding="utf-8") as f:
+        s = f.read()
+    s2 = s.replace(
+        '    "//conditions:default": [],  # x86_64: no arm NEON sources\n'
+        '})',
+        '    "//conditions:default": [\n'
+        '        "webrtc/common_audio/fir_filter_sse.cc",\n'
+        '        "webrtc/common_audio/fir_filter_avx2.cc",\n'
+        '        "webrtc/common_audio/resampler/sinc_resampler_sse.cc",\n'
+        '        "webrtc/common_audio/resampler/sinc_resampler_avx2.cc",\n'
+        '    ],  # x86_64 SIMD sources\n'
+        '})',
+    )
+    assert s2 != s, "webrtc x86_64 SIMD sources patch failed"
+    # add the x86 arch flags (SSE2/AVX2) to the linux branch
+    s2 = s2.replace(
+        '    "@platforms//os:linux": platform_shared_flags + linux_specific_flags,\n'
+        '    "//conditions:default": platform_shared_flags + apple_specific_flags,',
+        '    "@platforms//os:linux": platform_shared_flags + linux_specific_flags + x86_specific_flags,\n'
+        '    "//conditions:default": platform_shared_flags + apple_specific_flags + x86_specific_flags,',
+    )
+    s2 = s2.replace(
+        'arm64_specific_flags = [\n'
+        '    "-DWEBRTC_ARCH_ARM64",\n'
+        '    "-DWEBRTC_HAS_NEON",\n'
+        '    "-DLIBYUV_NEON",\n'
+        ']\n',
+        'arm64_specific_flags = [\n'
+        '    "-DWEBRTC_ARCH_ARM64",\n'
+        '    "-DWEBRTC_HAS_NEON",\n'
+        '    "-DLIBYUV_NEON",\n'
+        ']\n'
+        '\n'
+        'x86_specific_flags = [\n'
+        '    "-msse2",\n'
+        '    "-mavx2",\n'
+        ']\n',
+    )
+    assert 'x86_specific_flags = [' in s2, "x86_specific_flags insertion failed"
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(s2)
+    print("webrtc BUILD: x86_64 SIMD sources and flags wired in")
