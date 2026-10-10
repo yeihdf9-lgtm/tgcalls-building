@@ -40,7 +40,10 @@ jobs:
             build-system/bazel-rules/rules_xcodeproj \
             build-system/bazel-rules/rules_apple \
             build-system/bazel-rules/rules_swift \
-            build-system/bazel-rules/apple_support
+            build-system/bazel-rules/apple_support \
+            third-party/libvpx/libvpx \
+            third-party/dav1d/dav1d \
+            third-party/webrtc/webrtc
           echo "--- pinned tgcalls commit ---"
           git -C submodules/TgVoipWebrtc/tgcalls rev-parse HEAD
 
