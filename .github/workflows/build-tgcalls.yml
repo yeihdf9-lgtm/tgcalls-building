@@ -59,55 +59,10 @@ jobs:
       - name: Patch sources for GCC/Linux
         working-directory: telegram-ios
         run: |
-          # Apple libc++ includes many standard headers transitively; GCC/libstdc++
-          # does not. Prepend the standard threading/utility headers to every
-          # tgcalls source that uses the corresponding symbols (patching files
-          # directly, since Bazel's include validator rejects extra -include
-          # headers as undeclared inclusions).
-          cd submodules/TgVoipWebrtc/tgcalls
-          for f in $(grep -rlE 'std::(mutex|lock_guard|unique_lock|scoped_lock|condition_variable|thread|atomic|call_once|once_flag|shared_mutex)' tgcalls tools --include='*.cpp' --include='*.h' --include='*.hpp' || true); do
-            { printf '#include <mutex>\n#include <condition_variable>\n#include <atomic>\n#include <thread>\n'; cat "$f"; } > "$f.tmp" && mv "$f.tmp" "$f"
-          done
-          echo "Patched files: $(grep -rl '^#include <mutex>' tgcalls tools | wc -l)"
-          # GCC requires designated initializers to follow declaration order
-          # (Clang tolerates out-of-order). In tgcalls::Config, logPath is
-          # declared before statsLogPath; swap the two designators in main.cpp.
-          python3 - <<'PYEOF'
-          import re
-          p = 'tools/cli/main.cpp'
-          s = open(p).read()
-          s = s.replace(
-              '            .statsLogPath = {callerStatsPath},\n            // rtc log sinks are process-global, so wiring logPath on just the caller\n            // captures RTC_LOG output for both sides of the call.\n            .logPath = {logFile},',
-              '            .logPath = {logFile},\n            // rtc log sinks are process-global, so wiring logPath on just the caller\n            // captures RTC_LOG output for both sides of the call.\n            .statsLogPath = {callerStatsPath},')
-          s = s.replace(
-              '            .statsLogPath = {calleeStatsPath},',
-              '            .logPath = {},\n            .statsLogPath = {calleeStatsPath},')
-          open(p, 'w').write(s)
-          print('main.cpp designator order fixed')
-          PYEOF
-          # GNU ld resolves static archives left-to-right; upstream lists
-          # libavutil.a before libavcodec.a, so avutil symbols referenced by
-          # libavcodec.a stay unresolved at link time (Apple ld is tolerant).
-          # Add a trailing library with avutil/swresample archives to close the cycle.
-          python3 - <<'PYEOF'
-          p = 'submodules/ffmpeg/BUILD'
-          s = open(p).read()
-          tail = '''cc_library(
-    name = "ffmpeg_lib_tail",
-    srcs = ["libavutil.a", "libswresample.a"],
-    visibility = ["//visibility:public"],
-)
-
-cc_library(
-    name = "ffmpeg",'''
-          assert 'name = "ffmpeg",' in s
-          s = s.replace('cc_library(\n    name = "ffmpeg",', tail, 1)
-          old_deps = 'deps = [\n        ":ffmpeg_lib",'
-          assert old_deps in s
-          s = s.replace(old_deps, 'deps = [\n        ":ffmpeg_lib",\n        ":ffmpeg_lib_tail",', 1)
-          open(p, 'w').write(s)
-          print('ffmpeg BUILD: added ffmpeg_lib_tail for GNU ld archive order')
-          PYEOF
+          # Repo-committed script: (1) prepend missing std threading includes,
+          # (2) fix designated-initializer order for GCC, (3) fix GNU ld
+          # archive order for the ffmpeg static libs.
+          python3 ../patches/apply_linux_patches.py
 
       - name: Create build-configuration stub
         working-directory: telegram-ios
