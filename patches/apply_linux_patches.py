@@ -233,3 +233,21 @@ if os.environ.get("WASI_X86") == "1":
     with open(p, "w", encoding="utf-8") as f:
         f.write(s2)
     print("webrtc BUILD: x86_64 SIMD sources and flags wired in")
+
+    # webrtc: declare the x86 SIMD headers in the cc_library hdrs so the
+    # include validator accepts them (they are included unconditionally by
+    # fir_filter_factory.cc on all platforms).
+    p = "third-party/webrtc/BUILD"
+    with open(p, "r", encoding="utf-8") as f:
+        s = f.read()
+    s2 = s.replace(
+        '    "common_audio/fir_filter_neon.h",\n',
+        '    "common_audio/fir_filter_neon.h",\n'
+        '    "common_audio/fir_filter_sse.h",\n'
+        '    "common_audio/fir_filter_avx2.h",\n',
+        1,
+    )
+    assert s2 != s, "webrtc hdrs x86 pattern not found"
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(s2)
+    print("webrtc BUILD: x86 SIMD headers declared")
