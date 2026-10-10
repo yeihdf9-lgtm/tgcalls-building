@@ -35,7 +35,12 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/TelegramMessenger/Telegram-iOS.git telegram-ios
           cd telegram-ios
-          git submodule update --init --depth 1 submodules/TgVoipWebrtc
+          git submodule update --init --depth 1 \
+            submodules/TgVoipWebrtc \
+            build-system/bazel-rules/rules_xcodeproj \
+            build-system/bazel-rules/rules_apple \
+            build-system/bazel-rules/rules_swift \
+            build-system/bazel-rules/apple_support
           echo "--- pinned tgcalls commit ---"
           git -C submodules/TgVoipWebrtc/tgcalls rev-parse HEAD
 
