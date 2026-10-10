@@ -200,6 +200,15 @@ if os.environ.get("WASI_X86") == "1":
         '        "webrtc/common_audio/fir_filter_avx2.cc",\n'
         '        "webrtc/common_audio/resampler/sinc_resampler_sse.cc",\n'
         '        "webrtc/common_audio/resampler/sinc_resampler_avx2.cc",\n'
+        '        "webrtc/common_audio/signal_processing/complex_bit_reverse.c",\n'
+        '        "webrtc/common_audio/signal_processing/filter_ar_fast_q12.c",\n'
+        '        "webrtc/common_audio/third_party/ooura/fft_size_128/ooura_fft_sse2.cc",\n'
+        '        "webrtc/modules/audio_processing/aec3/adaptive_fir_filter_avx2.cc",\n'
+        '        "webrtc/modules/audio_processing/aec3/adaptive_fir_filter_erl_avx2.cc",\n'
+        '        "webrtc/modules/audio_processing/aec3/fft_data_avx2.cc",\n'
+        '        "webrtc/modules/audio_processing/aec3/matched_filter_avx2.cc",\n'
+        '        "webrtc/modules/audio_processing/aec3/vector_math_avx2.cc",\n'
+        '        "webrtc/modules/audio_processing/agc2/rnn_vad/vector_math_avx2.cc",\n'
         '    ],  # x86_64 SIMD sources\n'
         '})',
     )
