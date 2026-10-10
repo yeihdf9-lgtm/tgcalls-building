@@ -118,3 +118,27 @@ if os.environ.get("WASI_X86") == "1":
     print("MODULE.bazel: wasi_sdk_linux switched to x86_64 variant")
 
 print("ffmpeg BUILD: reordered ffmpeg_libs for GNU ld archive resolution")
+
+# --- 5. openh264: don't compile arm64 NEON asm on x86_64 hosts -----------
+if os.environ.get("WASI_X86") == "1":
+    p = "third-party/openh264/BUILD"
+    with open(p, "r", encoding="utf-8") as f:
+        s = f.read()
+    # The //conditions:default branch falls back to arm64 asm sources; make
+    # all three selects use the (empty) ios_x86_64 branch as default.
+    s2 = s.replace(
+        '    "@build_bazel_rules_apple//apple:ios_x86_64": [],\n    "//conditions:default": arm64_specific_sources,',
+        '    "@build_bazel_rules_apple//apple:ios_x86_64": [],\n    "//conditions:default": [],',
+    )
+    s2 = s2.replace(
+        '    "@build_bazel_rules_apple//apple:ios_x86_64": [],\n    "//conditions:default": arm64_specific_copts,',
+        '    "@build_bazel_rules_apple//apple:ios_x86_64": [],\n    "//conditions:default": [],',
+    )
+    s2 = s2.replace(
+        '    "@build_bazel_rules_apple//apple:ios_x86_64": [],\n    "//conditions:default": arm64_specific_textual_hdrs,',
+        '    "@build_bazel_rules_apple//apple:ios_x86_64": [],\n    "//conditions:default": [],',
+    )
+    assert s2 != s, "openh264 BUILD patterns not found"
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(s2)
+    print("openh264 BUILD: arm64 asm excluded on default (x86_64) platform")
