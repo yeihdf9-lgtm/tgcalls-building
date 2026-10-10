@@ -78,6 +78,10 @@ jobs:
           #endif
           #endif
           EOF
+          # Bazel's include validator rejects force-included headers inside the
+          # execroot as "undeclared inclusions", so install it as a system header
+          # instead (/usr/local/include is on GCC's default search path).
+          sudo cp linux_std_prefix.h /usr/local/include/linux_std_prefix.h
           # GCC/libstdc++ does not pull <mutex> in transitively like Apple libc++ does
           sed -i '1i #include <mutex>' \
             submodules/TgVoipWebrtc/tgcalls/tgcalls/group/GroupInstanceReferenceImpl.cpp
