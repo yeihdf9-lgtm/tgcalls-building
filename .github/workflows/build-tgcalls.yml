@@ -85,6 +85,29 @@ jobs:
           open(p, 'w').write(s)
           print('main.cpp designator order fixed')
           PYEOF
+          # GNU ld resolves static archives left-to-right; upstream lists
+          # libavutil.a before libavcodec.a, so avutil symbols referenced by
+          # libavcodec.a stay unresolved at link time (Apple ld is tolerant).
+          # Add a trailing library with avutil/swresample archives to close the cycle.
+          python3 - <<'PYEOF'
+          p = 'submodules/ffmpeg/BUILD'
+          s = open(p).read()
+          tail = '''cc_library(
+    name = "ffmpeg_lib_tail",
+    srcs = ["libavutil.a", "libswresample.a"],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "ffmpeg",'''
+          assert 'name = "ffmpeg",' in s
+          s = s.replace('cc_library(\n    name = "ffmpeg",', tail, 1)
+          old_deps = 'deps = [\n        ":ffmpeg_lib",'
+          assert old_deps in s
+          s = s.replace(old_deps, 'deps = [\n        ":ffmpeg_lib",\n        ":ffmpeg_lib_tail",', 1)
+          open(p, 'w').write(s)
+          print('ffmpeg BUILD: added ffmpeg_lib_tail for GNU ld archive order')
+          PYEOF
 
       - name: Create build-configuration stub
         working-directory: telegram-ios
