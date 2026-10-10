@@ -103,7 +103,7 @@ if os.environ.get("WASI_X86") == "1":
     p = "MODULE.bazel"
     with open(p, "r", encoding="utf-8") as f:
         s = f.read()
-    s = s.replace("wasi-sdk-33.0-arm64-linux.tar.gz", "wasi-sdk-33.0-x86_64-linux.tar.gz")
+    s = s.replace("wasi-sdk-33.0-arm64-linux", "wasi-sdk-33.0-x86_64-linux")  # url + strip_prefix
     # sha256 of wasi-sdk-33.0-x86_64-linux.tar.gz (verified download)
     x86_sha = "0ba8b5bfaeb2adf3f29bab5841d76cf5318ab8e1642ea195f88baba1abd47bce"
     s, n = _re.subn(
