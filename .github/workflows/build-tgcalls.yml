@@ -69,6 +69,22 @@ jobs:
             { printf '#include <mutex>\n#include <condition_variable>\n#include <atomic>\n#include <thread>\n'; cat "$f"; } > "$f.tmp" && mv "$f.tmp" "$f"
           done
           echo "Patched files: $(grep -rl '^#include <mutex>' tgcalls tools | wc -l)"
+          # GCC requires designated initializers to follow declaration order
+          # (Clang tolerates out-of-order). In tgcalls::Config, logPath is
+          # declared before statsLogPath; swap the two designators in main.cpp.
+          python3 - <<'PYEOF'
+          import re
+          p = 'tools/cli/main.cpp'
+          s = open(p).read()
+          s = s.replace(
+              '            .statsLogPath = {callerStatsPath},\n            // rtc log sinks are process-global, so wiring logPath on just the caller\n            // captures RTC_LOG output for both sides of the call.\n            .logPath = {logFile},',
+              '            .logPath = {logFile},\n            // rtc log sinks are process-global, so wiring logPath on just the caller\n            // captures RTC_LOG output for both sides of the call.\n            .statsLogPath = {callerStatsPath},')
+          s = s.replace(
+              '            .statsLogPath = {calleeStatsPath},',
+              '            .logPath = {},\n            .statsLogPath = {calleeStatsPath},')
+          open(p, 'w').write(s)
+          print('main.cpp designator order fixed')
+          PYEOF
 
       - name: Create build-configuration stub
         working-directory: telegram-ios
