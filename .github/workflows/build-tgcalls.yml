@@ -1,0 +1,82 @@
+name: Build tgcalls (Linux ARM64)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build-tgcalls:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 360
+
+    steps:
+      - name: Show runner info
+        run: |
+          uname -a
+          nproc
+          df -h /
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup || true
+          df -h /
+
+      - name: Install build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc g++ cmake meson ninja-build nasm make \
+            autoconf automake libtool pkg-config python3 \
+            unzip curl ca-certificates patch \
+            zlib1g-dev libbz2-dev
+
+      - name: Clone Telegram-iOS (with tgcalls submodule)
+        run: |
+          git clone --depth 1 https://github.com/TelegramMessenger/Telegram-iOS.git telegram-ios
+          cd telegram-ios
+          git submodule update --init --depth 1 submodules/TgVoipWebrtc
+          echo "--- pinned tgcalls commit ---"
+          git -C submodules/TgVoipWebrtc/tgcalls rev-parse HEAD
+
+      - name: Download Bazel 8.4.2 (linux-arm64)
+        run: |
+          cd telegram-ios
+          mkdir -p build-input
+          curl -fL "https://github.com/bazelbuild/bazel/releases/download/8.4.2/bazel-8.4.2-linux-arm64" \
+            -o build-input/bazel-8.4.2-linux
+          chmod +x build-input/bazel-8.4.2-linux
+          ./build-input/bazel-8.4.2-linux --version
+
+      - name: Build tgcalls_cli
+        working-directory: telegram-ios
+        run: |
+          ./build-input/bazel-8.4.2-linux build \
+            //submodules/TgVoipWebrtc/tgcalls/tools/cli:tgcalls_cli \
+            --strategy=Genrule=standalone \
+            --spawn_strategy=standalone
+
+      - name: Collect artifacts (binary + libs)
+        if: success()
+        run: |
+          cd telegram-ios
+          BIN="bazel-bin/submodules/TgVoipWebrtc/tgcalls/tools/cli/tgcalls_cli"
+          mkdir -p out
+          cp "$BIN" out/tgcalls_cli
+          # wasm cores referenced by the CLI as data deps (if materialized)
+          find bazel-bin/submodules/TgVoipWebrtc -maxdepth 1 -name '*.wasm' -exec cp {} out/ \; || true
+          # record dynamic library dependencies for local import
+          ldd "$BIN" | tee out/tgcalls_cli-ldd.txt || true
+          # package as tar.gz to preserve the executable bit
+          tar -czvf tgcalls-cli-linux-arm64.tar.gz -C out .
+          sha256sum out/tgcalls_cli
+          ls -la out/
+
+      - name: Upload artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tgcalls-cli-linux-arm64
+          path: telegram-ios/tgcalls-cli-linux-arm64.tar.gz
+          if-no-files-found: error
+          retention-days: 30
