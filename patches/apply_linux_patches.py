@@ -307,3 +307,253 @@ if os.environ.get("WASI_X86") == "1":
     with open(p, "w", encoding="utf-8") as f:
         f.write(s2)
     print("crc32c BUILD: crc32c_sse42.cc enabled on x86_64 default")
+
+# --- 4. H2 repro: video on the 1:1 (p2p/reflector) path + callee sink flap ---
+# Adds to tools/cli/main.cpp:
+#   a) --sink-flap-ms <ms> flag (default 100; 0 = off)
+#   b) with --video on a 1:1 mode: a caller VideoCaptureInterface fed by the
+#      FakeVideoTrackSource (via the weak platform hooks from section 5), so
+#      real encoded video flows caller -> callee and the callee's decoder
+#      thread runs VideoSinkImpl::OnFrame continuously;
+#   c) a callee-side sink-flap thread that alternates
+#      setIncomingVideoOutput(sinkA/sinkB) every flap interval -- the app-side
+#      mutator that races the decoder thread (addSink push_back vs OnFrame
+#      iteration over the unsynchronized _sinks vector).
+# All anchors are the upstream (pre-section-2) text; section 2 of this script
+# has already fixed the designated-initializer order by the time we run.
+p = os.path.join(ROOT, "tools/cli/main.cpp")
+with open(p, "r", encoding="utf-8") as f:
+    s = f.read()
+
+# 4a) includes
+old = '#include "VideoCaptureInterface.h"\n'
+new = (
+    '#include "VideoCaptureInterface.h"\n'
+    '#include "VideoCapturerInterface.h"\n'
+    '#include "StaticThreads.h"\n'
+    '#include "platform/PlatformInterface.h"\n'
+    '#include "fake_video_source.h"\n'
+    '#include "fake_video_sink.h"\n'
+)
+assert old in s, "main.cpp: VideoCaptureInterface include anchor not found"
+s = s.replace(old, new, 1)
+
+# 4b) synthetic-source platform hooks + capturer (file scope, after the ADM stub)
+old = "} // namespace webrtc\n"
+new = '''} // namespace webrtc
+
+// ---------------------------------------------------------------------------
+// H2 repro support: synthetic video into the 1:1 engine.
+// platform/fake/FakeInterface.cpp declares weak hooks; these strong
+// definitions route source/capturer creation to FakeVideoTrackSource.
+// ---------------------------------------------------------------------------
+namespace {
+
+class CliVideoCapturer : public tgcalls::VideoCapturerInterface {
+public:
+    explicit CliVideoCapturer(rtc::scoped_refptr<webrtc::VideoTrackSourceInterface> source)
+        : _source(std::move(source)) {}
+    void setState(tgcalls::VideoState) override {}
+    void setPreferredCaptureAspectRatio(float) override {}
+    void setUncroppedOutput(std::shared_ptr<rtc::VideoSinkInterface<webrtc::VideoFrame>>) override {}
+    int getRotation() override { return 0; }
+private:
+    rtc::scoped_refptr<webrtc::VideoTrackSourceInterface> _source;
+};
+
+} // namespace
+
+webrtc::scoped_refptr<webrtc::VideoTrackSourceInterface> tgcalls_s1_makeVideoSource(
+        rtc::Thread *, rtc::Thread *) {
+    static const auto source = FakeVideoTrackSource::Create(0);
+    return source;
+}
+
+std::unique_ptr<tgcalls::VideoCapturerInterface> tgcalls_s1_makeVideoCapturer(
+        webrtc::scoped_refptr<webrtc::VideoTrackSourceInterface> source,
+        std::string deviceId,
+        std::function<void(tgcalls::VideoState)> stateUpdated,
+        std::function<void(tgcalls::PlatformCaptureInfo)> captureInfoUpdated,
+        std::shared_ptr<tgcalls::PlatformContext> platformContext,
+        std::pair<int, int> &outResolution) {
+    outResolution = {1280, 720};
+    if (stateUpdated) {
+        stateUpdated(tgcalls::VideoState::Active);
+    }
+    return std::make_unique<CliVideoCapturer>(source);
+}
+'''
+assert old in s, "main.cpp: ADM stub anchor not found"
+s = s.replace(old, new, 1)
+
+# 4c) --sink-flap-ms flag
+old = 'bool enableVideo = false;\n'
+new = 'bool enableVideo = false;\n    int sinkFlapMs = 100;\n'
+assert old in s, "main.cpp: enableVideo declaration anchor not found"
+s = s.replace(old, new, 1)
+
+old = '''        } else if (std::string(argv[i]) == "--video") {
+            enableVideo = true;
+        }'''
+new = '''        } else if (std::string(argv[i]) == "--video") {
+            enableVideo = true;
+        } else if (std::string(argv[i]) == "--sink-flap-ms" && i + 1 < argc) {
+            sinkFlapMs = std::atoi(argv[++i]);
+        }'''
+assert old in s, "main.cpp: --video arg anchor not found"
+s = s.replace(old, new, 1)
+
+# 4d) caller capture + callee sinks + flap state, before the caller descriptor
+old = '    auto callerDesc = (tgcalls::Descriptor){\n'
+new = '''    // H2 repro: enable video on the 1:1 path. The caller gets a synthetic
+    // capture (FakeVideoTrackSource via the platform hooks); the callee gets
+    // two FakeVideoSinks that the flap thread below alternates between with
+    // setIncomingVideoOutput -- racing the callee decoder thread's
+    // VideoSinkImpl::OnFrame over the unsynchronized _sinks vector.
+    const bool videoCall = enableVideo && (mode == "p2p" || mode == "reflector");
+    std::shared_ptr<tgcalls::VideoCaptureInterface> callerCapture;
+    std::shared_ptr<FakeVideoSink> calleeSinkA;
+    std::shared_ptr<FakeVideoSink> calleeSinkB;
+    std::atomic<bool> sinkFlapStop{false};
+    std::thread sinkFlapThread;
+    uint64_t sinkFlaps = 0;
+    if (videoCall) {
+        callerCapture = tgcalls::VideoCaptureInterface::Create(
+            tgcalls::StaticThreads::getThreads(), "cli", false, nullptr);
+        calleeSinkA = std::make_shared<FakeVideoSink>();
+        calleeSinkB = std::make_shared<FakeVideoSink>();
+        logMsg("Main", "video call enabled (sink flap every %dms)", sinkFlapMs);
+    }
+
+    auto callerDesc = (tgcalls::Descriptor){
+'''
+assert old in s, "main.cpp: callerDesc anchor not found"
+s = s.replace(old, new, 1)
+
+# 4e) .videoCapture on the caller descriptor (after encryptionKey, decl order)
+old = '        .encryptionKey = tgcalls::EncryptionKey(keyData, true),\n'
+new = (
+    '        .encryptionKey = tgcalls::EncryptionKey(keyData, true),\n'
+    '        .videoCapture = callerCapture,\n'
+)
+assert old in s, "main.cpp: caller encryptionKey anchor not found"
+s = s.replace(old, new, 1)
+
+# 4f) sink-flap thread start (before the duration sleep)
+old = '    logMsg("Main", "sleeping for %d seconds...", duration);\n'
+new = '''    if (videoCall && sinkFlapMs > 0) {
+        auto calleeWeak = calleeInstance;
+        sinkFlapThread = std::thread([&, calleeWeak]() {
+            // wait for the callee to be Established (renderer attached phase)
+            for (int i = 0; i < 300 && !sinkFlapStop.load(); i++) {
+                bool up = false;
+                {
+                    std::lock_guard<std::mutex> lock(callState->mutex);
+                    up = (callState->calleeState == tgcalls::State::Established);
+                }
+                if (up) break;
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+            bool a = true;
+            auto next = std::chrono::steady_clock::now();
+            const auto period = std::chrono::milliseconds(sinkFlapMs);
+            while (!sinkFlapStop.load()) {
+                next += period;
+                calleeWeak->setIncomingVideoOutput(
+                    a ? std::weak_ptr<rtc::VideoSinkInterface<webrtc::VideoFrame>>(calleeSinkA)
+                      : std::weak_ptr<rtc::VideoSinkInterface<webrtc::VideoFrame>>(calleeSinkB));
+                sinkFlaps++;
+                logMsg("SinkFlap", "n=%llu attach %s", (unsigned long long)sinkFlaps, a ? "A" : "B");
+                a = !a;
+                std::this_thread::sleep_until(next);
+            }
+        });
+    }
+
+    logMsg("Main", "sleeping for %d seconds...", duration);
+'''
+assert old in s, "main.cpp: duration sleep anchor not found"
+s = s.replace(old, new, 1)
+
+# 4g) join the flap thread before teardown
+old = '    logMsg("Main", "stopping instances...");\n'
+new = '''    sinkFlapStop = true;
+    if (sinkFlapThread.joinable()) {
+        sinkFlapThread.join();
+    }
+
+    logMsg("Main", "stopping instances...");
+'''
+assert old in s, "main.cpp: stopping anchor not found"
+s = s.replace(old, new, 1)
+
+# 4h) summary evidence: flap count + decoded frame counts per sink
+old = '        printf("BWE non-zero:      %s\\n", bweNonZero ? "yes" : "no");\n'
+new = '''        printf("BWE non-zero:      %s\\n", bweNonZero ? "yes" : "no");
+        if (videoCall) {
+            printf("Video sink flaps:  %llu\\n", (unsigned long long)sinkFlaps);
+            printf("Callee sinkA frames decoded: %d\\n", calleeSinkA ? calleeSinkA->frameCount() : -1);
+            printf("Callee sinkB frames decoded: %d\\n", calleeSinkB ? calleeSinkB->frameCount() : -1);
+        }
+'''
+assert old in s, "main.cpp: BWE summary anchor not found"
+s = s.replace(old, new, 1)
+
+with open(p, "w", encoding="utf-8") as f:
+    f.write(s)
+print("main.cpp: 1:1 video path + sink-flap simulator patched in")
+
+# --- 5. FakeInterface weak hooks (default-off synthetic source/capturer) -----
+# tgcalls_s1_makeVideoSource / tgcalls_s1_makeVideoCapturer are declared weak
+# here; tgcalls_cli provides the strong definitions (section 4b). Without the
+# strong definitions the symbols resolve to null and behavior is unchanged.
+p = os.path.join(ROOT, "tgcalls/platform/fake/FakeInterface.cpp")
+with open(p, "r", encoding="utf-8") as f:
+    s = f.read()
+
+old = '''webrtc::scoped_refptr<webrtc::VideoTrackSourceInterface> FakeInterface::makeVideoSource(rtc::Thread *signalingThread,
+                                                                                     rtc::Thread *workerThread) {
+  return nullptr;
+}'''
+new = '''// H2 repro hooks (weak, default-off): tgcalls_cli provides strong
+// definitions that create a synthetic video source/capturer. Signatures must
+// match tools/cli/main.cpp verbatim.
+webrtc::scoped_refptr<webrtc::VideoTrackSourceInterface> tgcalls_s1_makeVideoSource(
+    rtc::Thread *signalingThread,
+    rtc::Thread *workerThread) __attribute__((weak));
+std::unique_ptr<VideoCapturerInterface> tgcalls_s1_makeVideoCapturer(
+    webrtc::scoped_refptr<webrtc::VideoTrackSourceInterface> source,
+    std::string deviceId,
+    std::function<void(VideoState)> stateUpdated,
+    std::function<void(PlatformCaptureInfo)> captureInfoUpdated,
+    std::shared_ptr<PlatformContext> platformContext,
+    std::pair<int, int> &outResolution) __attribute__((weak));
+
+webrtc::scoped_refptr<webrtc::VideoTrackSourceInterface> FakeInterface::makeVideoSource(rtc::Thread *signalingThread,
+                                                                                     rtc::Thread *workerThread) {
+  if (tgcalls_s1_makeVideoSource) {
+    return tgcalls_s1_makeVideoSource(signalingThread, workerThread);
+  }
+  return nullptr;
+}'''
+assert old in s, "FakeInterface: makeVideoSource anchor not found"
+s = s.replace(old, new, 1)
+
+old = '''    std::shared_ptr<PlatformContext> platformContext, std::pair<int, int> &outResolution) {
+  return nullptr;
+  //return std::make_unique<VideoCapturerInterfaceImpl>(source, deviceId, stateUpdated, outResolution);
+}'''
+new = '''    std::shared_ptr<PlatformContext> platformContext, std::pair<int, int> &outResolution) {
+  if (tgcalls_s1_makeVideoCapturer) {
+    return tgcalls_s1_makeVideoCapturer(source, deviceId, stateUpdated, captureInfoUpdated,
+                                        platformContext, outResolution);
+  }
+  return nullptr;
+  //return std::make_unique<VideoCapturerInterfaceImpl>(source, deviceId, stateUpdated, outResolution);
+}'''
+assert old in s, "FakeInterface: makeVideoCapturer anchor not found"
+s = s.replace(old, new, 1)
+
+with open(p, "w", encoding="utf-8") as f:
+    f.write(s)
+print("FakeInterface.cpp: weak video hooks patched in")

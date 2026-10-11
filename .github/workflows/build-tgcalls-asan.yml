@@ -100,6 +100,26 @@ jobs:
             --strategy=Genrule=standalone \
             --spawn_strategy=standalone
 
+      - name: Smoke test (video call on the 1:1 path + sink flap, under ASan)
+        working-directory: telegram-ios
+        run: |
+          # --video now works for --mode p2p/reflector (patch section 4):
+          # synthetic caller video -> callee decodes -> VideoSinkImpl::OnFrame
+          # runs continuously, while the flap thread alternates
+          # setIncomingVideoOutput(sinkA/sinkB) every 50 ms -- the H2 race.
+          # A hit is the finding, not a CI failure: the ASan report goes into
+          # the artifact and the step still passes.
+          set +e
+          ASAN_OPTIONS=detect_leaks=0:abort_on_error=0:halt_on_error=0 \
+            timeout 180 ./bazel-bin/submodules/TgVoipWebrtc/tgcalls/tools/cli/tgcalls_cli \
+            --mode p2p --video --sink-flap-ms 50 --duration 10 --quiet \
+            > smoke-video.log 2>&1
+          echo "cli_exit=$?" >> smoke-video.log
+          tail -40 smoke-video.log
+          if grep -q "ERROR: AddressSanitizer" smoke-video.log; then
+            echo "::warning::ASan fired during the video sink-flap smoke test (H2 surface) -- full report is in smoke-video.log inside the artifact"
+          fi
+
       - name: Collect artifacts (binary + libs, asan/ directory)
         if: success()
         run: |
@@ -117,6 +137,7 @@ jobs:
             echo "Run with symbolized reports:"
             echo "  ASAN_OPTIONS=detect_leaks=1:symbolize=1 ./tgcalls_cli --mode p2p --duration 10"
           } > out/asan/RUNTIME-NOTES.txt
+          cp smoke-video.log out/asan/ 2>/dev/null || true
           tar -czf tgcalls-cli-linux-x86_64-asan.tar.gz -C out .
           sha256sum out/asan/tgcalls_cli
           ls -la out/asan/
