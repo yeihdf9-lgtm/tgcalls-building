@@ -507,52 +507,67 @@ print("main.cpp: 1:1 video path + sink-flap simulator patched in")
 # tgcalls_s1_makeVideoSource / tgcalls_s1_makeVideoCapturer are declared weak
 # here; tgcalls_cli provides the strong definitions (section 4b). Without the
 # strong definitions the symbols resolve to null and behavior is unchanged.
+# Anchors are whitespace-tolerant: the pinned submodule's formatting may
+# differ from any local copy.
+import re as _re
+
 p = os.path.join(ROOT, "tgcalls/platform/fake/FakeInterface.cpp")
 with open(p, "r", encoding="utf-8") as f:
     s = f.read()
 
-old = '''webrtc::scoped_refptr<webrtc::VideoTrackSourceInterface> FakeInterface::makeVideoSource(rtc::Thread *signalingThread,
-                                                                                     rtc::Thread *workerThread) {
-  return nullptr;
-}'''
-new = '''// H2 repro hooks (weak, default-off): tgcalls_cli provides strong
-// definitions that create a synthetic video source/capturer. Signatures must
-// match tools/cli/main.cpp verbatim.
-webrtc::scoped_refptr<webrtc::VideoTrackSourceInterface> tgcalls_s1_makeVideoSource(
-    rtc::Thread *signalingThread,
-    rtc::Thread *workerThread) __attribute__((weak));
-std::unique_ptr<VideoCapturerInterface> tgcalls_s1_makeVideoCapturer(
-    webrtc::scoped_refptr<webrtc::VideoTrackSourceInterface> source,
-    std::string deviceId,
-    std::function<void(VideoState)> stateUpdated,
-    std::function<void(PlatformCaptureInfo)> captureInfoUpdated,
-    std::shared_ptr<PlatformContext> platformContext,
-    std::pair<int, int> &outResolution) __attribute__((weak));
+# 5a) weak declarations, inserted right after "namespace tgcalls {"
+decls = (
+    "namespace tgcalls {\n"
+    "\n"
+    "// H2 repro hooks (weak, default-off): tgcalls_cli provides strong\n"
+    "// definitions that create a synthetic video source/capturer.\n"
+    "webrtc::scoped_refptr<webrtc::VideoTrackSourceInterface> tgcalls_s1_makeVideoSource(\n"
+    "    rtc::Thread *signalingThread,\n"
+    "    rtc::Thread *workerThread) __attribute__((weak));\n"
+    "std::unique_ptr<VideoCapturerInterface> tgcalls_s1_makeVideoCapturer(\n"
+    "    webrtc::scoped_refptr<webrtc::VideoTrackSourceInterface> source,\n"
+    "    std::string deviceId,\n"
+    "    std::function<void(VideoState)> stateUpdated,\n"
+    "    std::function<void(PlatformCaptureInfo)> captureInfoUpdated,\n"
+    "    std::shared_ptr<PlatformContext> platformContext,\n"
+    "    std::pair<int, int> &outResolution) __attribute__((weak));\n"
+)
+assert "namespace tgcalls {" in s, "FakeInterface: namespace anchor not found"
+s = s.replace("namespace tgcalls {\n", decls, 1)
 
-webrtc::scoped_refptr<webrtc::VideoTrackSourceInterface> FakeInterface::makeVideoSource(rtc::Thread *signalingThread,
-                                                                                     rtc::Thread *workerThread) {
-  if (tgcalls_s1_makeVideoSource) {
-    return tgcalls_s1_makeVideoSource(signalingThread, workerThread);
-  }
-  return nullptr;
-}'''
-assert old in s, "FakeInterface: makeVideoSource anchor not found"
-s = s.replace(old, new, 1)
+# 5b) makeVideoSource body -> hook dispatch (whitespace-tolerant)
+pat = _re.compile(
+    r"(webrtc::scoped_refptr<webrtc::VideoTrackSourceInterface>\s+"
+    r"FakeInterface::makeVideoSource\s*\(.*?)\s*\{\s*return nullptr;",
+    _re.S,
+)
+s2 = pat.sub(
+    lambda m: m.group(1) + " {\n"
+    "  if (tgcalls_s1_makeVideoSource) {\n"
+    "    return tgcalls_s1_makeVideoSource(signalingThread, workerThread);\n"
+    "  }\n"
+    "  return nullptr;",
+    s, count=1,
+)
+assert s2 != s, "FakeInterface: makeVideoSource body pattern not found"
+s = s2
 
-old = '''    std::shared_ptr<PlatformContext> platformContext, std::pair<int, int> &outResolution) {
-  return nullptr;
-  //return std::make_unique<VideoCapturerInterfaceImpl>(source, deviceId, stateUpdated, outResolution);
-}'''
-new = '''    std::shared_ptr<PlatformContext> platformContext, std::pair<int, int> &outResolution) {
-  if (tgcalls_s1_makeVideoCapturer) {
-    return tgcalls_s1_makeVideoCapturer(source, deviceId, stateUpdated, captureInfoUpdated,
-                                        platformContext, outResolution);
-  }
-  return nullptr;
-  //return std::make_unique<VideoCapturerInterfaceImpl>(source, deviceId, stateUpdated, outResolution);
-}'''
-assert old in s, "FakeInterface: makeVideoCapturer anchor not found"
-s = s.replace(old, new, 1)
+# 5c) makeVideoCapturer body -> hook dispatch (whitespace-tolerant)
+pat = _re.compile(
+    r"(std::unique_ptr<VideoCapturerInterface>\s+"
+    r"FakeInterface::makeVideoCapturer\s*\(.*?)\s*\{\s*return nullptr;",
+    _re.S,
+)
+s2 = pat.sub(
+    lambda m: m.group(1) + " {\n"
+    "  if (tgcalls_s1_makeVideoCapturer) {\n"
+    "    return tgcalls_s1_makeVideoCapturer(source, deviceId, stateUpdated, captureInfoUpdated, platformContext, outResolution);\n"
+    "  }\n"
+    "  return nullptr;",
+    s, count=1,
+)
+assert s2 != s, "FakeInterface: makeVideoCapturer body pattern not found"
+s = s2
 
 with open(p, "w", encoding="utf-8") as f:
     f.write(s)
