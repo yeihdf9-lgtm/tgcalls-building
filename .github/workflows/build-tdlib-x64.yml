@@ -1,0 +1,56 @@
+name: Build TDLib x64
+
+on:
+  workflow_dispatch:
+    inputs:
+      td_ref:
+        description: "TDLib git ref (branch, tag or commit)"
+        default: "master"
+
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Clone TDLib
+        run: |
+          git clone https://github.com/tdlib/td.git
+          cd td && git checkout ${{ inputs.td_ref }}
+          echo "TD_SHA=$(git rev-parse HEAD)" >> $GITHUB_ENV
+
+      # 1) Cache the finished build, keyed by exact TDLib commit.
+      #    If it hits, every build step below is skipped.
+      - name: Restore finished TDLib build
+        id: td-cache
+        uses: actions/cache@v4
+        with:
+          path: td/tdlib
+          key: tdlib-linux-x64-${{ env.TD_SHA }}
+
+      - name: Install deps
+        if: steps.td-cache.outputs.cache-hit != 'true'
+        run: sudo apt-get update && sudo apt-get install -y make git zlib1g-dev libssl-dev gperf cmake g++ ccache
+
+      # 2) ccache: speeds up rebuilds when the commit changes but most files don't.
+      - name: Setup ccache
+        if: steps.td-cache.outputs.cache-hit != 'true'
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: tdlib-linux-x64
+          max-size: 1G
+
+      - name: Build
+        if: steps.td-cache.outputs.cache-hit != 'true'
+        run: |
+          cd td && mkdir build && cd build
+          cmake -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+                -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+                -DCMAKE_INSTALL_PREFIX:PATH=../tdlib ..
+          cmake --build . --target install -j$(nproc)
+          ccache -s
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tdlib-linux-x64
+          path: td/tdlib
+
